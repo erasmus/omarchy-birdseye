@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "erasmus.birdseye",
+  "name": "Birdseye",
+  "version": "1.0.0",
+  "author": "Erasmus Hagen",
+  "license": "MIT",
+  "description": "Mission Control-style grid of live thumbnails of every open window, across all workspaces. Click one to jump to it.",
+  "homepage": "https://github.com/erasmus/omarchy-birdseye",
+  "repository": "https://github.com/erasmus/omarchy-birdseye",
+  "keywords": [
+    "windows",
+    "overview",
+    "mission control",
+    "expose",
+    "window switcher",
+    "workspaces",
+    "thumbnails"
+  ],
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Birdseye.qml"
+  }
+}
