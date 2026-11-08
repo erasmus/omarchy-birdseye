@@ -2,13 +2,10 @@
 
 ![Birdseye showing every open window as a grid of live thumbnails](preview.png)
 
-Birdseye is a Mission Control-style overview for [Omarchy](https://omarchy.org).
+Birdseye is a simple macOS Mission Control-style overview for [Omarchy](https://omarchy.org).
 Open it and every window you have — on every workspace — is laid out as a grid
 of live thumbnails on a dimmed backdrop. Click one, or arrow to it and press
 Enter, and Hyprland takes you there.
-
-It's for the moment when you know the window you want but not which
-workspace you left it on.
 
 Plugin id: `erasmus.birdseye`
 
