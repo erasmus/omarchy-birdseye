@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "erasmus.birdseye",
   "name": "Birdseye",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Erasmus Hagen",
   "license": "MIT",
   "description": "Mission Control-style grid of live thumbnails of every open window, across all workspaces. Click one to jump to it.",

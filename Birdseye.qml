@@ -19,7 +19,8 @@ Item {
 
   property bool opened: false
   property int selectedIndex: 0
-  // Frozen while open so a title change doesn't rebuild the grid mid-click.
+  // Only reassigned when something the grid shows has changed (see refresh),
+  // so a no-op event doesn't rebuild the grid mid-click.
   property var windows: []
   // address -> width / height, as measured from each window's captured frame.
   // Hyprland's last reported size can be stale; the capture never is.
@@ -96,6 +97,9 @@ Item {
       if (selected ? next[i].wayland === selected.wayland : next[i].focused) index = i
     }
     if (!root.sameWindows(root.windows, next)) root.windows = next
+    // When the selected window is gone, stay where the hand was rather than
+    // jumping back to the first cell.
+    if (index < 0) index = Math.min(root.selectedIndex, next.length - 1)
     root.selectedIndex = Math.max(0, index)
   }
 
@@ -142,10 +146,14 @@ Item {
     root.windows = []
     root.measuredAspects = ({})
     root.selectedIndex = 0
+    root.monitorNames = root.currentMonitorNames()
+    openGrace.restart()
     root.opened = true
     root.refresh()
-    // Sizes come from Hyprland's last report; ask for a fresh one.
+    // Sizes come from Hyprland's last report; ask for a fresh one and re-read
+    // once it has landed.
     Hyprland.refreshToplevels()
+    refreshTimer.restart()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -193,8 +201,6 @@ Item {
   function iconSource(appId) {
     var entry = DesktopEntries.heuristicLookup(appId)
     var icon = entry ? entry.icon : appId
-    var library = root.shell ? root.shell.appLibrary : null
-    if (library && typeof library.iconSource === "function") return library.iconSource(icon)
     return Quickshell.iconPath(icon, "application-x-executable")
   }
 
@@ -202,35 +208,76 @@ Item {
     target: Quickshell
     function onScreensChanged() { if (root.opened) root.dismiss() }
   }
-  Connections {
-    target: Hyprland.monitors
-    function onValuesChanged() { if (root.opened) root.dismiss() }
+  // Hyprland.monitors is a cache, and OverlayWindow refreshes it on every open.
+  // A refresh that merely catches the cache up must not close the overview;
+  // only a real change to the set of monitor names does, once the opening
+  // refresh has had its moment.
+  property var monitorNames: []
+
+  function currentMonitorNames() {
+    var names = []
+    var monitors = Hyprland.monitors.values
+    for (var i = 0; i < monitors.length; i++) names.push(String(monitors[i].name || ""))
+    return names.sort()
   }
 
-  // Windows opening, closing or resizing while the overview is up.
   Connections {
-    target: Hyprland.toplevels
+    target: Hyprland.monitors
     enabled: root.opened
-    function onValuesChanged() { root.refresh() }
+    function onValuesChanged() {
+      var names = root.currentMonitorNames()
+      if (openGrace.running) {
+        root.monitorNames = names
+        return
+      }
+      if (names.join("\n") !== root.monitorNames.join("\n")) root.dismiss()
+    }
   }
+  Timer {
+    id: openGrace
+    interval: 500
+  }
+
+  // Windows opening, closing, moving or resizing while the overview is up.
+  // Every source funnels into one debounced refresh, so a burst of events, or
+  // the toplevel list and the raw IPC stream reporting the same change,
+  // re-reads the grid once.
   Connections {
     target: Hyprland
     enabled: root.opened
     function onRawEvent(event) {
-      if (event.name === "closewindow" || event.name === "openwindow" || event.name === "movewindowv2")
-        refreshTimer.restart()
+      switch (event.name) {
+      case "openwindow": case "closewindow": case "movewindowv2":
+      case "changefloatingmode": case "fullscreen":
+        hyprRefresh.restart()
+      }
+    }
+  }
+  Connections {
+    target: Hyprland.toplevels
+    enabled: root.opened
+    function onValuesChanged() { refreshTimer.restart() }
+  }
+  // A new window's Wayland handle can land after Hyprland has reported it.
+  Connections {
+    target: ToplevelManager.toplevels
+    enabled: root.opened
+    function onValuesChanged() { refreshTimer.restart() }
+  }
+  // Debounce the burst, ask Hyprland for fresh geometry, then let the answer
+  // land before re-reading.
+  Timer {
+    id: hyprRefresh
+    interval: 100
+    onTriggered: {
+      Hyprland.refreshToplevels()
+      refreshTimer.restart()
     }
   }
   Timer {
     id: refreshTimer
-    interval: 120
-    onTriggered: if (root.opened) root.refresh()
-  }
-  // The fresh sizes requested on open arrive a moment later.
-  Timer {
     interval: 150
-    running: root.opened
-    onTriggered: root.refresh()
+    onTriggered: if (root.opened) root.refresh()
   }
 
   OverlayWindow {
@@ -248,30 +295,20 @@ Item {
       onClicked: root.dismiss()
     }
 
-    Item {
+    // The shell's shared key dispatcher: arrows and h/j/k/l, Tab, Enter/Space,
+    // Escape. Horizontal moves follow the reading direction; the grid below
+    // mirrors itself under right-to-left so "forward" is where the eye goes.
+    PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      focus: true
 
-      Keys.onPressed: function(event) {
-        var key = Util.readingKey(event)
-        if (event.key === Qt.Key_Escape) {
-          root.dismiss()
-        } else if (key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
-          root.move(-1)
-        } else if (key === Qt.Key_Right || event.key === Qt.Key_Tab) {
-          root.move(1)
-        } else if (event.key === Qt.Key_Up) {
-          root.selectedIndex = GridLayout.verticalNeighbour(root.cells, root.selectedIndex, -1)
-        } else if (event.key === Qt.Key_Down) {
-          root.selectedIndex = GridLayout.verticalNeighbour(root.cells, root.selectedIndex, 1)
-        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
-          root.activate(root.selectedIndex)
-        } else {
-          return
-        }
-        event.accepted = true
+      onMoveRequested: function(dx, dy) {
+        if (dx !== 0) root.move(dx)
+        else root.selectedIndex = GridLayout.verticalNeighbour(root.cells, root.selectedIndex, dy)
       }
+      onTabRequested: function(direction) { root.move(direction) }
+      onActivateRequested: root.activate(root.selectedIndex)
+      onCloseRequested: root.dismiss()
     }
 
     Item {
@@ -291,7 +328,8 @@ Item {
           readonly property var box: root.cells[index] || { x: 0, y: 0, width: 0, height: 0 }
           readonly property bool selected: index === root.selectedIndex
 
-          x: box.x
+          // Plain x is not mirrored by LayoutMirroring, so mirror it by hand.
+          x: LayoutMirroring.enabled ? grid.width - box.x - box.width : box.x
           y: box.y
           width: box.width
           height: box.height + root.labelHeight
